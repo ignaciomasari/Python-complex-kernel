@@ -12,7 +12,7 @@ from itertools import product, combinations
 
 ICM_ITERATIONS = 3
 PDDP_flag = True
-use_Powell = False
+use_Powell = True
 use_MRF = False
 
 def module_phase_to_complex(module, phase_difference, cross_phase = None):
@@ -86,7 +86,18 @@ def svm_optimization_problem(x, *args):
     clf.fit(X=args[0][0], y=args[0][1])
     # CHANGE score to nuSVM upperbound
     score = clf.score(X=args[0][0], y=args[0][1])
-    return score
+    return 1/score
+
+def nusvm_optimization_problem(x, *args): 
+    # args[0]: complex_flatten_filtered
+    # args[1]: train_map_flatten_filtered
+    C = math.exp(x[0])
+    gamma = 0.5 * math.exp(-x[1])
+    clf = svm.SVC(kernel=complex_kernel(gamma=gamma), C=C)
+    clf.fit(X=args[0][0], y=args[0][1])
+    # CHANGE score to nuSVM upperbound
+    score = clf.score(X=args[0][0], y=args[0][1])
+    return 1/score
 
 def cluster(image, map, value, target):
 
@@ -95,7 +106,7 @@ def cluster(image, map, value, target):
     tot_samples = X.shape[0]
 
     X_reshaped = np.reshape(X,(tot_samples,-1))
-    clustering = PDDP(min_sample_split=2, max_clusters_number=int(target)).fit_predict(X_reshaped)#why target no funciona???
+    clustering = PDDP(min_sample_split=2, max_clusters_number=int(target)).fit_predict(X_reshaped)
     
     #In the case that less than "target" clusters were found, only unique centers are used (less than "target")
     clustering_unique_values = np.unique(clustering)
@@ -168,49 +179,39 @@ if __name__=="__main__":
     complex_flatten_filtered = complex_image_flatten[train_map_flatten != 0]
     train_map_flatten_filtered = train_map_flatten[train_map_flatten != 0]
 
-    #%% Powell minimization
+    np.save("Input/complex_image.npy", complex_image)
+    np.save("Input/train_map.npy", train_map)
+    np.save("Input/complex_image_flatten.npy", complex_image_flatten)
+    np.save("Input/complex_flatten_filtered.npy", complex_flatten_filtered)
+    np.save("Input/train_map_flatten.npy", train_map_flatten)
+    np.save("Input/train_map_flatten_filtered.npy", train_map_flatten_filtered)
+
+    exit()
+    #%% Parameter tunning
+
     if use_Powell:
-  
         x0 = np.array((1,1))
-        # start = timer()
         sol = minimize(
                 svm_optimization_problem,
                 x0=x0, 
                 args=[complex_flatten_filtered, train_map_flatten_filtered],
                 method="Powell",
-                bounds=((-2.3,1.6),(-0.7,1.6))
+                bounds=((-4,3),(-1.4,1))
         )
-        # stop = timer()
-        # print(f'time in miliseconds:{stop - start}')
+
         x = sol.x
-
-
-        # clf = svm.SVC(kernel=module_kernel(gamma=0.35), C=2.718)
-        # clf.fit(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        # score = clf.score(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        # # y_predicted = clf.predict(complex_flatten_filtered)
-        # # print(confusion_matrix(y_pred=y_predicted, y_true=train_map_flatten_filtered))
-
-        # clf_nu = svm.NuSVC(kernel=module_kernel(gamma=0.35), C=2.718)
-        # clf_nu.fit(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        # score2 = clf_nu.score(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        # # y_predicted_nu = clf_nu.predict(complex_flatten_filtered)
-        # # print(confusion_matrix(y_pred=y_predicted_nu, y_true=train_map_flatten_filtered))
-
-        # print(f"score SVM:{score}")
-        # print(f"score nuSVM:{score2}")
-
         C = math.exp(x[0])
         gamma = 0.5 * math.exp(-x[1])
+        print(f"C:{C}    gamma:{gamma}")
     else:
-        # C = 2.7
-        # gamma = 0.28
-        C = 0.10148
-        gamma = 0.1032
+        # C = 2.718
+        # gamma = 0.35
+        C = 1.558
+        gamma = 0.6928
 
     #%% Predict
-    #%% MRF
-    if (use_MRF):
+    
+    if (use_MRF): # MRF
     
         lambda_ = 0.5 #handpicked
 
@@ -270,21 +271,20 @@ if __name__=="__main__":
         max_vote = np.argmax(vote_map, axis=2) + 1
         plt.imshow(max_vote * 255. / max_vote.max())
         plt.show()
-    
-    #%% No MRF
-    else:
-        
+    else: # No MRF
         clf = svm.SVC(kernel=complex_kernel(gamma=gamma), C=C)
         clf.fit(X=complex_flatten_filtered, y=train_map_flatten_filtered)
         score = clf.score(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        y_predicted = clf.predict(complex_flatten_filtered)
-        print(confusion_matrix(y_pred=y_predicted, y_true=train_map_flatten_filtered))
+        print(f"score:{score}")
+        # y_predicted = clf.predict(complex_flatten_filtered)
+        # print(confusion_matrix(y_pred=y_predicted, y_true=train_map_flatten_filtered))
 
         clf = svm.SVC(kernel=module_kernel(gamma=0.35), C=2.718)
         clf.fit(X=complex_flatten_filtered, y=train_map_flatten_filtered)
         score = clf.score(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-        y_predicted = clf.predict(complex_flatten_filtered)
-        print(confusion_matrix(y_pred=y_predicted, y_true=train_map_flatten_filtered))
+        print(f"score:{score}")
+        # y_predicted = clf.predict(complex_flatten_filtered)
+        # print(confusion_matrix(y_pred=y_predicted, y_true=train_map_flatten_filtered))
 
 
     a = 0
