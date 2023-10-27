@@ -28,14 +28,14 @@ else:
 USE_CHECKPOINT = False
 SAVE_CHECKPOINT = False
 PDDP_FLAG = True
-PDDP_TARGET = 200
+PDDP_TARGET = 500
 USE_POWELL = True
 USE_MRF = False
-MRF_ITERATIONS = 3
+MRF_ITERATIONS = 0
 OPTIMIZE_LAMBDA = False
-MRF_SOLVER = 'GC'# 'GC', 'ICM'
+MRF_SOLVER = 'ICM'# 'GC', 'ICM'
 KERNEL_TYPE = 'complex_sym' #'real', 'complex', 'complex_sym'
-DATASET = 'Baltrum_Island'#'San_Francisco', 'Flevoland', 'Baltrum_Island'
+DATASET = 'San_Francisco'#'San_Francisco', 'Flevoland', 'Baltrum_Island'
 
 # %% Various Functions
 
@@ -193,7 +193,7 @@ def svm_optimization_problem_SB_linearized(x, *args):
     # args[1]: train_map_flatten_filtered
     # args[2]: kernel_function
     # bounds=((-4,3),(-9,5)),
-    if x[0]<-4 or x[0]>3 or x[1]<-7 or x[1]>5:
+    if x[0]<-4 or x[0]>4 or x[1]<-4 or x[1]>4:
         return len(args[1])
 
     C = math.exp(x[0])
@@ -214,6 +214,16 @@ def svm_optimization_problem_SB(x, *args):
     kernel_function = args[2](gamma=gamma)
     clf = svm.SVC(kernel=kernel_function, C=C, decision_function_shape='ovo')
     SB = multiclass_span_estimate(clf, kernel_function, args[0], args[1])
+    return SB
+
+def svm_optimization_problem_SB_vectors(x, *args): 
+    # args[0]: complex_flatten_filtered
+    # args[1]: train_map_flatten_filtered
+    # args[2]: kernel_function
+    C = x[0]
+    gamma = x[1]
+    kernel_function = args[2]
+    SB = multiclass_span_estimate_vectors(kernel_function, C, gamma, args[0], args[1])
     return SB
 
 def fast_span_estimate(svm, kernel_function, X_tr, Y_tr):
@@ -317,6 +327,24 @@ def multiclass_span_estimate(svm, kernel_function, X_multiclass, Y_multiclass):
         svm.fit(X=X_ovo, y=Y_ovo)
 
         SB += fast_span_estimate(svm, kernel_function, X_ovo, Y_ovo)
+
+    return SB
+
+def multiclass_span_estimate_vectors(kernel_function, vector_C, vector_gamma, X_multiclass, Y_multiclass):
+    
+    SB=0
+    classes_labels = np.unique(Y_multiclass)
+    
+    for index, pair in enumerate(combinations(classes_labels,2)):
+        svc = svm.SVC(kernel=kernel_function(gamma=vector_gamma[index]), C=vector_C[index], decision_function_shape='ovo')
+        Y_ovo_large = np.zeros((Y_multiclass.shape), dtype=np.int8)
+        Y_ovo_large[Y_multiclass==pair[0]] = 1
+        Y_ovo_large[Y_multiclass==pair[1]] = -1
+        Y_ovo = Y_ovo_large[Y_ovo_large!=0]
+        X_ovo = X_multiclass[Y_ovo_large!=0]
+        svc.fit(X=X_ovo, y=Y_ovo)
+
+        SB += fast_span_estimate(svc, kernel_function, X_ovo, Y_ovo)
 
     return SB
 
@@ -666,12 +694,15 @@ def Load_dataset_image(Dataset_name, use_checkpoint_flag=False, save_checkpoint_
             use_checkpoint_flag = False
 
     if not use_checkpoint_flag:
-        print("Loading LOG image dataset...")
-        path_module = f"./Input/{Dataset_name}/image_log.npy"
-        # print("Loading no_LOG image dataset...")
-        # path_module = f"./Input/{Dataset_name}/image_no_log.npy"
-        # print("Loading c_ENVI image dataset...")
-        # path_module = f"./Input/{Dataset_name}/image_c_ENVI.npy"
+        if (Dataset_name == 'San_Francisco' or Dataset_name == 'Flevoland'):
+            print("Loading c_ENVI image dataset...")
+            path_module = f"./Input/{Dataset_name}/image_c_ENVI.npy"
+        else:
+            print("Loading LOG image dataset...")
+            path_module = f"./Input/{Dataset_name}/image_log.npy"
+            # print("Loading no_LOG image dataset...")
+            # path_module = f"./Input/{Dataset_name}/image_no_log.npy"
+
         image = np.load(path_module)
         complex_image = np.zeros((image.shape[0], image.shape[1], int(image.shape[2] / 2), 2), dtype=np.float32)
         
@@ -721,6 +752,7 @@ def Load_dataset_image(Dataset_name, use_checkpoint_flag=False, save_checkpoint_
         # plt.hist(complex_image[:,:,2,1].flatten(), bins=1000)
         plt.show()
 
+
     return complex_image, train_map, n_classes
 
 #%% Main
@@ -752,117 +784,86 @@ if __name__=="__main__":
 
     print("Parameter tunning...")
 
-    if USE_POWELL: 
-
+    if USE_POWELL: #Parallelizable
+        
         x0 = np.array((1,1))
         start_time = time.time()
+        vector_C=[]
+        vector_gamma=[]
+        vector_func = []
+
+        vector_C_2=[]
+        vector_gamma_2=[]
+        vector_func_2 = []
+
+        vector_C_3=[]
+        vector_gamma_3=[]
+        vector_func_3 = []
+
         args = []
         args.append(complex_flatten_filtered)
         args.append(train_map_flatten_filtered)
         args.append(kernel_function)        
 
-        sol = pdfo.pdfo(
-                svm_optimization_problem_SB,
-                # try_problem,
-                x0=x0, 
-                args=args,
-                # method="Powell",
-                # bounds=((-4,3),(-1.4,1))
-                bounds=((0.02,20),(0.05,7)),
-                options={'maxfev': 5000}
-        )
+        for pair in combinations(np.unique(train_map_flatten_filtered),2):
+            args[0] = complex_flatten_filtered[np.logical_or(train_map_flatten_filtered==pair[0],train_map_flatten_filtered==pair[1])]
+            args[1] = train_map_flatten_filtered[np.logical_or(train_map_flatten_filtered==pair[0],train_map_flatten_filtered==pair[1])]
+
+            sol = pdfo.pdfo(
+                    svm_optimization_problem_SB,
+                    # try_problem,
+                    x0=x0, 
+                    args=args,
+                    # method="Powell",
+                    # bounds=((-4,3),(-1.4,1))
+                    bounds=((0.018,55),(0.009,27)),
+                    options={'maxfev': 5000}
+            )
+
+            vector_C.append(sol.x[0])
+            vector_gamma.append(sol.x[1])
+            vector_func.append(sol.fun)
+
+            # sol2 = pdfo.pdfo(
+            #         svm_optimization_problem_SB_linearized,
+            #         # try_problem,
+            #         x0=x0, 
+            #         args=args,
+            #         # method="Powell",
+            #         # bounds=((-4,3),(-1.4,1))
+            #         # bounds=((0.02,20),(0.05,5)),
+            #         options={'maxfev': 5000, 'rhobeg': 1e6}
+            # )
+            # vector_C_2.append(math.exp(sol2.x[0]))
+            # vector_gamma_2.append(0.5 * math.exp(-sol2.x[1]))
+            # vector_func_2.append(sol2.fun)
+
+            # sol3 = pdfo.pdfo(
+            #         svm_optimization_problem_SB_linearized,
+            #         # try_problem,
+            #         x0=x0, 
+            #         args=args,
+            #         method="newuoa",
+            #         # bounds=((-4,3),(-1.4,1)),
+            #         # bounds=((-4,3),(-9,5)),
+            #         # bounds=((0.02,20),(0.05,5)),
+            #         options={'maxfev': 5000, 'rhobeg': 1e6}
+            # )
+
+            # vector_C_3.append(math.exp(sol3.x[0]))
+            # vector_gamma_3.append(0.5 * math.exp(-sol3.x[1]))
+            # vector_func_3.append(sol3.fun)
+
         end_time = time.time()
 
-        x = sol.x
-        # C = math.exp(x[0])
-        # gamma = 0.5 * math.exp(-x[1])
-        C = x[0]
-        gamma = x[1]
-        print(f"C:{C},    gamma:{gamma},    functional:{sol.fun}")
+        print(f"C:{vector_C},    gamma:{vector_gamma},    functional:{vector_func}")
+        # print(f"C2:{vector_C_2},    gamma2:{vector_gamma_2},    functional2:{vector_func_2}")
+        # print(f"C3:{vector_C_3},    gamma3:{vector_gamma_3},    functional3:{vector_func_3}")
 
         elapsed_time = end_time - start_time
         print("Elapsed time: ", elapsed_time) 
 
-        # # try2
-        # x0 = np.array((1,1))
-        # start_time = time.time()
-        # args = []
-        # args.append(complex_flatten_filtered)
-        # args.append(train_map_flatten_filtered)
-        # args.append(kernel_function)
-
-        # sol = pdfo.pdfo(
-        #         svm_optimization_problem_SB_linearized,
-        #         # try_problem,
-        #         x0=x0, 
-        #         args=args,
-        #         # method="Powell",
-        #         # bounds=((-4,3),(-1.4,1)),
-        #         # bounds=((-4,3),(-9,5)),
-        #         # bounds=((0.02,20),(0.05,5)),
-        #         options={'maxfev': 5000, 'rhobeg': 1e6}
-        # )
-        # end_time = time.time()
-
-        # x = sol.x
-        # C = math.exp(x[0])
-        # gamma = 0.5 * math.exp(-x[1])
-        # # C = x[0]
-        # # gamma = x[1]
-        # print(f"C:{C},    gamma:{gamma},    functional:{sol.fun}")
-
-        # elapsed_time = end_time - start_time
-        # print("Elapsed time: ", elapsed_time) 
-
-        
-
-        # # try3
-        # x0 = np.array((1,1))
-        # start_time = time.time()
-        # args = []
-        # args.append(complex_flatten_filtered)
-        # args.append(train_map_flatten_filtered)
-        # args.append(kernel_function)
-
-        # sol = pdfo.pdfo(
-        #         svm_optimization_problem_SB_linearized,
-        #         # try_problem,
-        #         x0=x0, 
-        #         args=args,
-        #         method="newuoa",
-        #         # bounds=((-4,3),(-1.4,1)),
-        #         # bounds=((-4,3),(-9,5)),
-        #         # bounds=((0.02,20),(0.05,5)),
-        #         options={'maxfev': 5000, 'rhobeg': 1e6}
-        # )
-        # end_time = time.time()
-
-        # x = sol.x
-        # C = math.exp(x[0])
-        # gamma = 0.5 * math.exp(-x[1])
-        # # C = x[0]
-        # # gamma = x[1]
-        # print(f"C:{C},    gamma:{gamma},    functional:{sol.fun}")
-
-        # elapsed_time = end_time - start_time
-        # print("Elapsed time: ", elapsed_time) 
-
-
-        # SF
-        # PDFO normal and bounded
-        # C:19.999646807282154,    gamma:4.393900644686247,    functional:0.2525
-        # Elapsed time:  527.6078419685364
-        # PDFO linearized uobyqa
-        # C:1.7384389244009992,    gamma:7.8297855558966445,    functional:0.2985
-        # Elapsed time:  3757.362387895584
-        # PDFO linearized newuoa
-        # C:1.9286615988319975,    gamma:7.899505640594436,    functional:0.2995
-        # Elapsed time:  3855.4465351104736
-        # sklearn normal bounded method="Powell"
-        # C:16.194806934256125,    gamma:4.151997286521436,    functional:0.2535
-        # Elapsed time:  2567.53133559227
-        # sklearn linearized bounded(implicitly) method="Powell"
-
+        flag = True
 
     else:
         # C = 2.718
@@ -892,148 +893,118 @@ if __name__=="__main__":
 
     #%% Predict
     # Predict_batches = 8192
-    Predict_batches = 256 * os.cpu_count()
-    clf = svm.SVC(kernel=kernel_function(gamma=gamma), C=C)
+    Predict_batches = 256 * os.cpu_count()   
 
-    if not USE_MRF:
-        MRF_ITERATIONS = 0
+    start_time = time.time()    
 
-        start_time = time.time()
-
-        print("Training...")
-        clf.fit(X=complex_flatten_filtered, y=train_map_flatten_filtered)
-
-        print("Predicting...")
-
-        vote_flatten = np.zeros((complex_image_flatten.shape[0]))
-
-        input_arrays = [complex_image_flatten[
-                vote_flatten.size // Predict_batches * division : vote_flatten.size // Predict_batches * (division + 1)
-                ] for division in range(Predict_batches)]
-
-        if (vote_flatten.size % Predict_batches != 0):
-            input_arrays.append(complex_image_flatten[vote_flatten.size // Predict_batches * Predict_batches:])
-
-        with PPool(nodes = os.cpu_count()) as executor:
-            results = executor.map(clf.predict, input_arrays)
-
-        for division, result in enumerate(results):
-            if division < Predict_batches: 
-                vote_flatten[
-                    vote_flatten.size // Predict_batches * division : vote_flatten.size // Predict_batches * (division + 1)
-                    ] = result
-            else:
-                vote_flatten[vote_flatten.size // Predict_batches * Predict_batches:] = result
-        
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print("Elapsed time: ", elapsed_time) 
-
-        max_vote = np.reshape(vote_flatten,(train_map.shape)).squeeze()
-
-    else:
-
-        start_time = time.time()
-
+    if USE_MRF:
         lambda_ = [1,1] #handpicked
-
         spatial_image = np.zeros((complex_image.shape[0], complex_image.shape[1], complex_image.shape[2] + 1, complex_image.shape[3]), dtype=np.float32)
         spatial_image[:,:,:complex_image.shape[2],:] = complex_image
+        input_image = spatial_image
+    else:
+        MRF_ITERATIONS = 1
+        input_image = complex_image
 
-        vote_map = np.zeros((train_map.shape[0],train_map.shape[1], n_classes), dtype=np.uint8)
+    vote_map = np.zeros((train_map.shape[0],train_map.shape[1], n_classes), dtype=np.uint8)
+    classes_labels = np.unique(train_map_flatten_filtered)
 
-        classes_labels = np.unique(train_map_flatten_filtered)
-        for pair in combinations(classes_labels,2):
-            print(f'pair:{pair}')
+    for index, pair in enumerate(combinations(classes_labels,2)):
+        print(f'pair:{pair}, gamma:{vector_gamma[index]}, C:{vector_C[index]}')
 
-            if (train_map!=pair[0]).all():
-                vote_map[:, pair[1] - 1] +=1
-                continue
-            elif (train_map!=pair[1]).all():
-                vote_map[:, pair[0] - 1] +=1
-                continue
+        if (train_map!=pair[0]).all():
+            vote_map[:, pair[1] - 1] +=1
+            continue
+        elif (train_map!=pair[1]).all():
+            vote_map[:, pair[0] - 1] +=1
+            continue
 
+        clf = svm.SVC(kernel=kernel_function(gamma=vector_gamma[index]), C=vector_C[index])
+
+        train_map_pair = np.zeros(train_map.shape, dtype=np.uint8)
+        train_map_pair[train_map==pair[0]] = pair[0]
+        train_map_pair[train_map==pair[1]] = pair[1]
+        train_map_pair_flatten = np.reshape(train_map_pair,(-1))
+        train_map_pair_flatten_filtered = train_map_pair_flatten[train_map_pair_flatten != 0]
+
+        if USE_MRF:
             energy_min = sys.float_info.max
-            train_map_pair = np.zeros(train_map.shape, dtype=np.uint8)
-            train_map_pair[train_map==pair[0]] = pair[0]
-            train_map_pair[train_map==pair[1]] = pair[1]
-            train_map_pair_flatten = np.reshape(train_map_pair,(-1))
-            train_map_pair_flatten_filtered = train_map_pair_flatten[train_map_pair_flatten != 0]
             classification_optimal = np.zeros((train_map.shape[0],train_map.shape[1]), dtype=np.uint8)
 
-            for iter in range(MRF_ITERATIONS):
-                print(f'Iteration:{iter}')
-                spatial_image_flatten = np.reshape(spatial_image, (-1, spatial_image.shape[2], spatial_image.shape[3]))
-                spatial_flatten_filtered = spatial_image_flatten[train_map_pair_flatten != 0]
+        for iter in range(MRF_ITERATIONS):
 
-                clf.fit(X=spatial_flatten_filtered, y=train_map_pair_flatten_filtered)
-                #ONLY for try
-                # lambda_ = SVM_MRF_HoKashyap(clf, spatial_image, train_map_pair_flatten)
+            print(f'Iteration:{iter}')
+            input_image_flatten = np.reshape(input_image, (-1, input_image.shape[2], input_image.shape[3]))
+            input_image_flatten_filtered = input_image_flatten[train_map_pair_flatten != 0]
 
-                y_predicted_flatten = np.zeros((train_map_pair_flatten.shape), dtype=np.uint8) 
-                decision_flatten = np.zeros((train_map_pair_flatten.shape), dtype=np.float32)
+            clf.fit(X=input_image_flatten_filtered, y=train_map_pair_flatten_filtered)
+            #ONLY for try
+            # lambda_ = SVM_MRF_HoKashyap(clf, input_image, train_map_pair_flatten)
 
-                input_arrays = [spatial_image_flatten[
+            y_predicted_flatten = np.zeros((train_map_pair_flatten.shape), dtype=np.uint8) 
+            decision_flatten = np.zeros((train_map_pair_flatten.shape), dtype=np.float32)
+
+            input_arrays = [input_image_flatten[
+                    decision_flatten.size // Predict_batches * division : decision_flatten.size // Predict_batches * (division + 1)
+                    ] for division in range(Predict_batches)]
+
+            if (decision_flatten.size % Predict_batches != 0):
+                input_arrays.append(input_image_flatten[decision_flatten.size // Predict_batches * Predict_batches:])
+
+            with PPool(nodes = os.cpu_count()) as executor:
+                results = executor.map(clf.decision_function, input_arrays)
+
+            for division, result in enumerate(results):
+                if division < Predict_batches: 
+                    decision_flatten[
                         decision_flatten.size // Predict_batches * division : decision_flatten.size // Predict_batches * (division + 1)
-                        ] for division in range(Predict_batches)]
+                        ] = result
+                else:
+                    decision_flatten[decision_flatten.size // Predict_batches * Predict_batches:] = result
 
-                if (decision_flatten.size % Predict_batches != 0):
-                    input_arrays.append(spatial_image_flatten[decision_flatten.size // Predict_batches * Predict_batches:])
+            sign_decision = np.sign(decision_flatten)
+            y_predicted_flatten[sign_decision == -1] = pair[0]
+            y_predicted_flatten[sign_decision == 1] = pair[1]
+            decision_image = np.reshape(decision_flatten,(train_map.shape))
+            y_predicted_image = np.reshape(y_predicted_flatten,(train_map.shape))
 
-                with PPool(nodes = os.cpu_count()) as executor:
-                    results = executor.map(clf.decision_function, input_arrays)
+            if (iter<MRF_ITERATIONS - 1): #in the last run it is not necessary
+                for i in range(input_image.shape[0]):
+                    for j in range(input_image.shape[1]):                    
+                        input_image[i,j,-1,0] = EpsilonCompute(y_predicted_image,i,j)
 
-                for division, result in enumerate(results):
-                    if division < Predict_batches: 
-                        decision_flatten[
-                            decision_flatten.size // Predict_batches * division : decision_flatten.size // Predict_batches * (division + 1)
-                            ] = result
-                    else:
-                        decision_flatten[decision_flatten.size // Predict_batches * Predict_batches:] = result
+            if OPTIMIZE_LAMBDA:
+                if (iter == 0):
+                    #calculate lambda_
+                    lambda_ = SVM_MRF_HoKashyap_as_Gab(clf, input_image, train_map_pair_flatten, pair)
+                    print(f'Lambda:{lambda_}')
+                    #remove
+                    # lambda_1 = SVM_MRF_HoKashyap(clf, input_image, train_map_pair_flatten, pair)
+                    # print(f'Lambda:{lambda_1}')
+                    # input_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
+                    continue
+            
+            # input_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
+            if MRF_SOLVER == 'GC':
+                energy, classification = SVM_MRF_GraphCuts(decision_image, lambda_)
+                if energy < energy_min:
+                    energy_min = energy
+                    classification_optimal = classification
 
-                sign_decision = np.sign(decision_flatten)
-                y_predicted_flatten[sign_decision == -1] = pair[0]
-                y_predicted_flatten[sign_decision == 1] = pair[1]
-                decision_image = np.reshape(decision_flatten,(train_map.shape))
-                y_predicted_image = np.reshape(y_predicted_flatten,(train_map.shape))
+                        
+        if MRF_SOLVER == 'ICM' or not USE_MRF:
+            vote_map[y_predicted_image.squeeze() == pair[0],pair[0] - 1] += 1
+            vote_map[y_predicted_image.squeeze() == pair[1],pair[1] - 1] += 1
+        elif MRF_SOLVER == 'GC':
+            vote_map[classification_optimal == 0,pair[0] - 1] += 1
+            vote_map[classification_optimal == 1,pair[1] - 1] += 1
 
-                if (iter<MRF_ITERATIONS - 1): #in the last run it is not necessary
-                    for i in range(spatial_image.shape[0]):
-                        for j in range(spatial_image.shape[1]):                    
-                            spatial_image[i,j,-1,0] = EpsilonCompute(y_predicted_image,i,j)
+    max_vote = np.argmax(vote_map, axis=2) + 1
 
-                if OPTIMIZE_LAMBDA:
-                    if (iter == 0):
-                        #calculate lambda_
-                        lambda_ = SVM_MRF_HoKashyap_as_Gab(clf, spatial_image, train_map_pair_flatten, pair)
-                        print(f'Lambda:{lambda_}')
-                        #remove
-                        # lambda_1 = SVM_MRF_HoKashyap(clf, spatial_image, train_map_pair_flatten, pair)
-                        # print(f'Lambda:{lambda_1}')
-                        # spatial_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
-                        continue
-                
-                # spatial_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
-                if MRF_SOLVER == 'GC':
-                    energy, classification = SVM_MRF_GraphCuts(decision_image, lambda_)
-                    if energy < energy_min:
-                        energy_min = energy
-                        classification_optimal = classification
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print("Elapsed time: ", elapsed_time)
 
-                            
-            if MRF_SOLVER == 'ICM' or not USE_MRF:
-                vote_map[y_predicted_image.squeeze() == pair[0],pair[0] - 1] += 1
-                vote_map[y_predicted_image.squeeze() == pair[1],pair[1] - 1] += 1
-            elif MRF_SOLVER == 'GC':
-                vote_map[classification_optimal == 0,pair[0] - 1] += 1
-                vote_map[classification_optimal == 1,pair[1] - 1] += 1
-
-        max_vote = np.argmax(vote_map, axis=2) + 1
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print("Elapsed time: ", elapsed_time)
-
-    np.save(f"./Output/{DATASET}/{KERNEL_TYPE}_powell{USE_POWELL}_pddp{PDDP_TARGET}_mrf{MRF_ITERATIONS}_img_op3.npy", max_vote)
+    np.save(f"./Output/{DATASET}/{KERNEL_TYPE}_powell{USE_POWELL}_pddp{PDDP_TARGET}_mrf{MRF_ITERATIONS}_img_vectors_try2.npy", max_vote)
     plt.imshow(max_vote * 255. / max_vote.max())
     plt.show()
