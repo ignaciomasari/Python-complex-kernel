@@ -28,12 +28,12 @@ else:
 USE_CHECKPOINT = False
 SAVE_CHECKPOINT = False
 PDDP_FLAG = True
-PDDP_TARGET = 500
-USE_POWELL = True
-USE_MRF = False
-MRF_ITERATIONS = 0
-OPTIMIZE_LAMBDA = False
-MRF_SOLVER = 'ICM'# 'GC', 'ICM'
+PDDP_TARGET = 2000
+USE_POWELL = False
+USE_MRF = True
+MRF_ITERATIONS = 10
+OPTIMIZE_LAMBDA = True
+MRF_SOLVER = 'GC'# 'GC', 'ICM'
 KERNEL_TYPE = 'complex_sym' #'real', 'complex', 'complex_sym'
 DATASET = 'San_Francisco'#'San_Francisco', 'Flevoland', 'Baltrum_Island'
 
@@ -382,19 +382,18 @@ def EpsilonCompute(predicted_image, i, j):
     
     epsilon = 0
     count = 0
-    center_class = predicted_image[i,j]
+    # center_class = predicted_image[i,j]
     for coordinate in product(list(range(-1,2)),repeat=2):
         new_i = i + coordinate[0]
         new_j = j + coordinate[1]
         if (new_i >= 0) and (new_i < predicted_image.shape[0]) and (new_j >= 0) and (new_j < predicted_image.shape[1]):
             count +=1
-            if predicted_image[new_i,new_j] == center_class:
-                epsilon +=1
-            else:
-                epsilon -=1
+            epsilon +=predicted_image[new_i,new_j]
+            
 
     # The center point should be disregarded
-    epsilon -= 1
+    epsilon -= predicted_image[i,j]
+    epsilon *= -1
     count -=1
     return epsilon/count
     
@@ -447,25 +446,22 @@ def SVM_MRF_HoKashyap(clf, spatial_image, train_map_pair_flatten, pair):
     L = spatial_flatten_filtered.shape[0]
     E = np.zeros((L, 2))
 
-    E[:,0] = clf.decision_function(spatial_flatten_filtered)
+    E[:,0] = - np.abs(clf.decision_function(spatial_flatten_filtered))
 
     sumepsilon = 0
     for j, index in enumerate(clf.support_):
         index_in_spatial_image_flatten = np.where(train_map_pair_flatten != 0)[0][index]
         row = index_in_spatial_image_flatten // spatial_image.shape[1]
         column = index_in_spatial_image_flatten % spatial_image.shape[1]
-        sumepsilon += clf.dual_coef_[0,j] * spatial_image[row,column,-1,0]
+        pred = clf.predict(np.reshape(spatial_image[row,column],(1,spatial_image.shape[2],spatial_image.shape[3])))
+        sumepsilon += clf.dual_coef_[0,j] * spatial_image[row,column,-1,0] * pred
 
     for i in range(L):
         index_in_spatial_image_flatten = np.where(train_map_pair_flatten != 0)[0][i]
         row = index_in_spatial_image_flatten // spatial_image.shape[1]
         column = index_in_spatial_image_flatten % spatial_image.shape[1]
         pred = clf.predict(np.reshape(spatial_image[row,column],(1,spatial_image.shape[2],spatial_image.shape[3])))
-        if pred == pair[0]:
-            E[i,1] = -1
-        else:
-            E[i,1] = 1
-        E[i,1] *= sumepsilon * spatial_image[row,column,-1,0]
+        E[i,1] = - sumepsilon * spatial_image[row,column,-1,0] * pred
     
     Lambda_vector = HoKashyap(E, max_iterations = 1000000)
     
@@ -582,9 +578,9 @@ def Load_dataset(Dataset_name, use_checkpoint_flag=False, save_checkpoint_flag=F
         cross_phase = np.asarray(sp.io.envi.open(path_cross_phase + '.hdr', path_cross_phase + '.raw').asarray())
 
         complex_image_l = module_phase_to_complex(module_image, phase_diference, cross_phase)
-        print("SOLO POR AHORA SOLO IMAGEN L")
-        complex_image = complex_image_l
-        # complex_image = np.concatenate([complex_image_l, complex_image_c], axis=2)
+        # print("SOLO POR AHORA SOLO IMAGEN L")
+        # complex_image = complex_image_l
+        complex_image = np.concatenate([complex_image_l, complex_image_c], axis=2)
 
         path_train_map = f"./Input/{Dataset_name}/TrainMap"
         train_map =  np.asarray(sp.io.envi.open(path_train_map + '.hdr', path_train_map + '.raw').asarray())
@@ -697,13 +693,19 @@ def Load_dataset_image(Dataset_name, use_checkpoint_flag=False, save_checkpoint_
         if (Dataset_name == 'San_Francisco' or Dataset_name == 'Flevoland'):
             print("Loading c_ENVI image dataset...")
             path_module = f"./Input/{Dataset_name}/image_c_ENVI.npy"
+            image_c = np.load(path_module)
+            print("Loading l_ENVI image dataset...")
+            path_module = f"./Input/{Dataset_name}/image_l_ENVI.npy"
+            image_l = np.load(path_module)
+            image = np.concatenate([image_c, image_l], axis=2)
+
         else:
             print("Loading LOG image dataset...")
             path_module = f"./Input/{Dataset_name}/image_log.npy"
             # print("Loading no_LOG image dataset...")
             # path_module = f"./Input/{Dataset_name}/image_no_log.npy"
+            image = np.load(path_module)
 
-        image = np.load(path_module)
         complex_image = np.zeros((image.shape[0], image.shape[1], int(image.shape[2] / 2), 2), dtype=np.float32)
         
         for band in range(complex_image.shape[2]):
@@ -760,7 +762,7 @@ if __name__=="__main__":
     
     # complex_image, train_map, n_classes = Load_dataset_T3(DATASET, USE_CHECKPOINT, SAVE_CHECKPOINT, PDDP_FLAG)   
     complex_image, train_map, n_classes = Load_dataset_image(DATASET, USE_CHECKPOINT, SAVE_CHECKPOINT, PDDP_FLAG, PDDP_TARGET, plot=False)
-    # complex_image, train_map, n_classes = Load_dataset(DATASET, USE_CHECKPOINT, SAVE_CHECKPOINT, PDDP_FLAG, PDDP_TARGET, plot=True)   
+    # complex_image, train_map, n_classes = Load_dataset(DATASET, USE_CHECKPOINT, SAVE_CHECKPOINT, PDDP_FLAG, PDDP_TARGET, plot=False)   
 
     # Compute flatten imgs
     complex_image_flatten = np.reshape(complex_image, (-1,complex_image.shape[2],complex_image.shape[3]))
@@ -781,14 +783,13 @@ if __name__=="__main__":
             kernel_function = complex_symmetrical_kernel
 
     #%% Parameter tunning
-
     print("Parameter tunning...")
 
     if USE_POWELL:
         
         x0 = np.array((1,1))
         start_time = time.time()
-        
+
         vector_C=[]
         vector_gamma=[]
         vector_func = []
@@ -861,9 +862,7 @@ if __name__=="__main__":
         # print(f"C3:{vector_C_3},    gamma3:{vector_gamma_3},    functional3:{vector_func_3}")
 
         elapsed_time = end_time - start_time
-        print("Elapsed time: ", elapsed_time) 
-
-        flag = True
+        print("Parameter tunning time: ", elapsed_time) 
 
     else:
         # C = 2.718
@@ -876,20 +875,27 @@ if __name__=="__main__":
             # gamma = 4.393900644686247            
             # C = 1.7384389244009992
             # gamma = 7.8297855558966445    
-            C = 1.9286615988319975
-            gamma = 7.899505640594436  
-        elif DATASET=='Baltrum_Island':
-            C = 14.772267040888941
-            gamma = 2.5696008004365694
+            # C = 1.9286615988319975
+            # gamma = 7.899505640594436 
+            print("Using parameters calculated for 2000 samples per class, c and l bands, complex_sym kernel")
+            vector_C = [0.9387936164956946, 13.087870333261836, 2.108516204157188]
+            vector_gamma = [2.2866089193850074, 7.447928191849352, 1.0499012040342721]
+            # print("Using parameters calculated for 2000 samples per class, c and l bands old, complex_sym kernel")
+            # vector_C = [1.3280219603578405, 1.0887106781186549, 1.5430807982731722]
+            # vector_gamma = [2.11620702113011, 2.079710678118655, 1.5973404044228139]
 
-    if USE_MRF:
-        match KERNEL_TYPE:
-            case 'real':
-                kernel_function = module_kernel_mrf
-            case 'complex':
-                kernel_function = complex_kernel_mrf
-            case 'complex_sym':
-                kernel_function = complex_symmetrical_kernel_mrf
+        elif DATASET=='Baltrum_Island':
+            print('Using gamma and C calculated for 1000 samples per class, complex_symmetrical_kernel')
+            vector_C = [
+                1.5534315080034524, 0.8980182074803726, 0.8958528935136156, 1.3234968291938622, 0.9201043933724966, 0.6820760378602203, 0.899273970418126, 1.3335669521755285, 1.8597110796824916, 1.5580647303855018, 1.0204982634523605, 1.7082188701027168, 0.49247829026690376, 1.3391743458435834, 1.2575245460928468, 1.7722479454253572, 0.4159955678730737, 0.870049203431152, 1.1578532697155013, 1.2225514146728562, 0.5189232295787986, 1.03090539168909, 2.2760244982287836, 1.2130287589877307, 1.0193246553009974, 1.3430576032866888, 1.5498014650566474, 1.2462780512837908,
+                1.0189065252730392, 0.8068355415154345, 1.1073277113815152, 0.9680889028941043, 1.0180539068814463, 1.091067123145986, 1.3812605014834554, 1.0109556809839357, 1.018, 0.5778419301522035, 0.7787557009226063, 1.0203908143283222, 1.0957890341228655, 1.11707869346684, 1.2709907824960003, 1.0068556777940527, 1.925483612662153, 1.967647820177333, 1.0495146046260324, 1.7970449425412223, 1.0096834125332805, 1.1838722062254197, 0.9905294565737481, 0.34276929146434004, 1.3352414923387075, 1.3719035600725422, 2.204302520216902, 0.7896110695191801, 1.0182247988913964,
+                1.0754539570717994, 2.540856791840597, 1.4006743123486463, 1.4102528259488225, 0.9399620890447109, 0.5647402984274333, 1.8675680881204695, 1.5796240487399906, 0.8255211817064665
+                ]
+            vector_gamma = [
+                3.7547471535149652, 2.2160614206021894, 3.1918230221617567, 3.1932428069001793, 2.4971602276667424, 4.2725029796803335, 2.824474255584262, 2.942678139439175, 2.2166178127725544, 1.6035577540285166, 2.131214726140104, 2.9606581057356296, 2.95074269127979, 3.7857654141875567, 2.697192721320872, 2.7156220721844253, 3.8429768684897785, 2.592827509881049, 3.0347532752109188, 2.192407938923933, 2.853056797146671, 1.8932383689340986, 2.7819815596245494, 2.0314160934108676,
+                2.0289774520503507, 2.2061884320368432, 2.455020266003772, 2.598026267028483, 2.2085778484521623, 2.415463973287333, 2.053950639365205, 2.0060196668498556, 2.209084226172492, 2.1228485393093104, 2.1189203063541533, 2.041097715801574, 2.009, 2.396342373002821, 2.2844514022026794, 2.0099647518143673, 2.0558048706790273, 2.1086111629236344, 3.224688111841129, 2.540939386862531, 1.7211470422699657, 1.4837619385505791, 2.14686525920356, 2.6172402389824208, 2.2325761399068718,
+                2.575887736322413, 2.010224930342031, 2.8492521511715454, 3.1659891503816064, 3.9902946936057364, 2.4234014501117693, 1.5900168922778763, 2.0088906132621065, 2.227814897737445, 3.618919276916787, 2.171570065435414, 2.886807072425783, 2.0761312967207135, 2.0238789633277356, 2.679229694934223, 2.4976085393400647, 2.3669745139141325
+                ]
 
     #%% Predict
     # Predict_batches = 8192
@@ -902,8 +908,19 @@ if __name__=="__main__":
         spatial_image = np.zeros((complex_image.shape[0], complex_image.shape[1], complex_image.shape[2] + 1, complex_image.shape[3]), dtype=np.float32)
         spatial_image[:,:,:complex_image.shape[2],:] = complex_image
         input_image = spatial_image
+
+        match KERNEL_TYPE:
+            case 'real':
+                kernel_function = module_kernel_mrf
+            case 'complex':
+                kernel_function = complex_kernel_mrf
+            case 'complex_sym':
+                kernel_function = complex_symmetrical_kernel_mrf
+
     else:
         MRF_ITERATIONS = 1
+        MRF_SOLVER = 'ICM'
+        OPTIMIZE_LAMBDA = False
         input_image = complex_image
 
     vote_map = np.zeros((train_map.shape[0],train_map.shape[1], n_classes), dtype=np.uint8)
@@ -921,9 +938,9 @@ if __name__=="__main__":
 
         clf = svm.SVC(kernel=kernel_function(gamma=vector_gamma[index]), C=vector_C[index])
 
-        train_map_pair = np.zeros(train_map.shape, dtype=np.uint8)
-        train_map_pair[train_map==pair[0]] = pair[0]
-        train_map_pair[train_map==pair[1]] = pair[1]
+        train_map_pair = np.zeros(train_map.shape, dtype=np.int8)
+        train_map_pair[train_map==pair[0]] = 1
+        train_map_pair[train_map==pair[1]] = -1
         train_map_pair_flatten = np.reshape(train_map_pair,(-1))
         train_map_pair_flatten_filtered = train_map_pair_flatten[train_map_pair_flatten != 0]
 
@@ -963,12 +980,13 @@ if __name__=="__main__":
                     decision_flatten[decision_flatten.size // Predict_batches * Predict_batches:] = result
 
             sign_decision = np.sign(decision_flatten)
-            y_predicted_flatten[sign_decision == -1] = pair[0]
-            y_predicted_flatten[sign_decision == 1] = pair[1]
+            y_predicted_flatten = sign_decision.copy()
+            # y_predicted_flatten[sign_decision == -1] = pair[0]
+            # y_predicted_flatten[sign_decision == 1] = pair[1]
             decision_image = np.reshape(decision_flatten,(train_map.shape))
             y_predicted_image = np.reshape(y_predicted_flatten,(train_map.shape))
 
-            if (iter<MRF_ITERATIONS - 1): #in the last run it is not necessary
+            if (iter<MRF_ITERATIONS - 1) or (MRF_SOLVER=='GC' and iter==0): #in the last run it is not necessary
                 for i in range(input_image.shape[0]):
                     for j in range(input_image.shape[1]):                    
                         input_image[i,j,-1,0] = EpsilonCompute(y_predicted_image,i,j)
@@ -976,15 +994,16 @@ if __name__=="__main__":
             if OPTIMIZE_LAMBDA:
                 if (iter == 0):
                     #calculate lambda_
-                    lambda_ = SVM_MRF_HoKashyap_as_Gab(clf, input_image, train_map_pair_flatten, pair)
+                    # lambda_ = SVM_MRF_HoKashyap_as_Gab(clf, input_image, train_map_pair_flatten, pair)
+                    lambda_ = SVM_MRF_HoKashyap(clf, input_image, train_map_pair_flatten, pair)
                     print(f'Lambda:{lambda_}')
                     #remove
                     # lambda_1 = SVM_MRF_HoKashyap(clf, input_image, train_map_pair_flatten, pair)
                     # print(f'Lambda:{lambda_1}')
                     # input_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
-                    continue
+                    # continue # Por que continue?? en la primer vuelta no se hace?
             
-            # input_image[:,:,-1,0] *= lambda_[1]#? aca si creo que es??
+            input_image[:,:,-1,0] *= lambda_[1] /lambda_[0] #? aca si creo que es??
             if MRF_SOLVER == 'GC':
                 energy, classification = SVM_MRF_GraphCuts(decision_image, lambda_)
                 if energy < energy_min:
@@ -993,11 +1012,11 @@ if __name__=="__main__":
 
                         
         if MRF_SOLVER == 'ICM' or not USE_MRF:
-            vote_map[y_predicted_image.squeeze() == pair[0],pair[0] - 1] += 1
-            vote_map[y_predicted_image.squeeze() == pair[1],pair[1] - 1] += 1
+            vote_map[y_predicted_image.squeeze() == 1,pair[0] - 1] += 1
+            vote_map[y_predicted_image.squeeze() == -1,pair[1] - 1] += 1
         elif MRF_SOLVER == 'GC':
-            vote_map[classification_optimal == 0,pair[0] - 1] += 1
-            vote_map[classification_optimal == 1,pair[1] - 1] += 1
+            vote_map[classification_optimal == 1,pair[0] - 1] += 1
+            vote_map[classification_optimal == 0,pair[1] - 1] += 1
 
     max_vote = np.argmax(vote_map, axis=2) + 1
 
@@ -1005,6 +1024,6 @@ if __name__=="__main__":
     elapsed_time = end_time - start_time
     print("Elapsed time: ", elapsed_time)
 
-    np.save(f"./Output/{DATASET}/{KERNEL_TYPE}_powell{USE_POWELL}_pddp{PDDP_TARGET}_mrf{MRF_ITERATIONS}_img_vectors_try2.npy", max_vote)
+    np.save(f"./Output/{DATASET}/{KERNEL_TYPE}_powell{USE_POWELL}_pddp{PDDP_TARGET}_mrf_{MRF_SOLVER}{MRF_ITERATIONS}_lambda.npy", max_vote)
     plt.imshow(max_vote * 255. / max_vote.max())
     plt.show()
