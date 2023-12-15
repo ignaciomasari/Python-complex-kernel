@@ -2,9 +2,8 @@ import numpy as np
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 
-prediction_path = './Output/Baltrum_Island/complex_sym_powellTrue_pddp1000_mrf1_img.npy'
-# ground_truth_path = './Output/Baltrum_Island/complex_sym_powellFalse_pddp1000_mrf1.npy'
-ground_truth_path = './Input/Baltrum_Island/label_test.npy'
+prediction_path = './Output/Baltrum_Island_L_S_reduced/complex_sym_powellFalse_pddp1000_mrf_GC3_lambTrue.npy'
+ground_truth_path = './Input/Baltrum_Island_L_S_reduced/BI_label_test_corrected.npy'
 
 # Convert the images to numpy arrays
 prediction_array = np.load(prediction_path)
@@ -44,10 +43,11 @@ print('Average accuracy: ', np.round(AA, 2))
 print('Overall accuracy: ', np.round(OA, 2))
 print('Kappa coefficient: ', np.round(kappa, 2))
 
-# Plot both images with the same colorbar
-fig, ax = plt.subplots(1, 2)
-ax[0].imshow(prediction_array)
-ax[0].set_title('Prediction')
-ax[1].imshow(ground_truth_array)
-ax[1].set_title('Ground truth')
-plt.show()
+if False:
+    # Plot both images with the same colorbar
+    fig, ax = plt.subplots(1, 2)
+    ax[0].imshow(prediction_array)
+    ax[0].set_title('Prediction')
+    ax[1].imshow(ground_truth_array)
+    ax[1].set_title('Ground truth')
+    plt.show()

@@ -3,5 +3,8 @@ import numpy as np
 import os
 
 # train_header = sp.io.envi.read_envi_header()
-image = sp.io.envi.open('./Input/Baltrum_Island/label_test.hdr', './Input/Baltrum_Island/label_test.raw').load()
-np.save('./Input/Baltrum_Island/label_test.npy', image.squeeze())
+
+filename = './Input/Baltrum_Island_L_S_reduced/BI_label_test_corrected'
+
+image = sp.io.envi.open(filename + ".hdr", filename + ".raw").load()
+np.save(filename + ".npy", image.squeeze())
